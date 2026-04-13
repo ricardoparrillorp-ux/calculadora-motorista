@@ -1,0 +1,10 @@
+.git
+__pycache__
+*.pyc
+*.db
+*.log
+.env
+.env.*
+!.env.example
+server.log
+start.bat
