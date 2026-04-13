@@ -1,6 +1,7 @@
 services:
   - type: web
     name: calculadora-motorista-api
+    branch: master
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     envVars:

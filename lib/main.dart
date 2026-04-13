@@ -7,7 +7,7 @@ import 'dart:convert';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Troque pela URL do seu servidor em produção
-const _apiBase = 'https://calculadora-motorista.fly.dev';
+const _apiBase = 'https://calculadora-motorista-api.onrender.com';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _bg      = Color(0xFF0D0D0E);
@@ -928,6 +928,7 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
         controller: ctrl, keyboardType: TextInputType.number,
         textAlign: TextAlign.left, inputFormatters: [_TimeFormatter()],
         style: const TextStyle(fontSize: 13, color: _txt), decoration: _dec('0:00'),
+        onTap: () => ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length),
       )),
       const SizedBox(width: 4),
       GestureDetector(
@@ -967,6 +968,7 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
         controller: ctrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
         textAlign: align, inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
         style: const TextStyle(fontSize: 13, color: _txt), decoration: _dec(hint),
+        onTap: () => ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length),
       );
 
   Widget _textField({required TextEditingController ctrl, String hint = ''}) =>
@@ -1694,6 +1696,7 @@ class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
             inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
             style: const TextStyle(fontSize: 14, color: _txt),
             decoration: _dec('Faturamento (R\$)'),
+            onTap: () => _fatCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _fatCtrl.text.length),
           ),
           const SizedBox(height: 8),
 
@@ -1704,6 +1707,7 @@ class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
               inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
               style: const TextStyle(fontSize: 14, color: _txt),
               decoration: _dec('KM rodados'),
+              onTap: () => _kmCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _kmCtrl.text.length),
             )),
             const SizedBox(width: 8),
             Expanded(child: TextField(
@@ -1712,6 +1716,7 @@ class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
               inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
               style: const TextStyle(fontSize: 14, color: _txt),
               decoration: _dec('Horas trabalhadas'),
+              onTap: () => _horasCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _horasCtrl.text.length),
             )),
           ]),
           const SizedBox(height: 12),
