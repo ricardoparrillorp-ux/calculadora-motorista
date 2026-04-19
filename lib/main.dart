@@ -251,7 +251,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const SizedBox(height: 20),
-                  const Icon(Icons.directions_car_rounded, size: 36, color: _blue),
+                  const Icon(Icons.directions_car_rounded, size: 36, color: _green),
                   const SizedBox(height: 10),
                   const Text('MOTORISTAS',
                       style: TextStyle(fontSize: 11, letterSpacing: 4, color: _muted, fontWeight: FontWeight.w600)),
@@ -646,6 +646,15 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
       _nomesCtrl.length,
       (i) => {'nome': _nomesCtrl[i].text, 'valor': _p(_valoresCtrl[i].text)},
     ));
+    final kmJson = jsonEncode(_kmCtrl.map((c) => _p(c.text)).toList());
+    final horasJson = jsonEncode(_horasCtrl.map((c) {
+      final t = c.text.trim();
+      if (t.contains(':')) {
+        final pts = t.split(':');
+        return _p(pts[0]) + (pts.length > 1 ? _p(pts[1]) / 60.0 : 0);
+      }
+      return _p(t);
+    }).toList());
 
     final saved = await showModalBottomSheet<bool>(
       context: context,
@@ -656,6 +665,8 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
         total: total, km: km, horas: horas,
         porKm: porKm, porHora: porHora,
         appsJson: appsJson,
+        kmJson: kmJson,
+        horasJson: horasJson,
         fmtFn: _fmt,
         fmtHorasFn: _fmtHoras,
       ),
@@ -713,9 +724,9 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 16),
         child: Column(
           children: [
-            _cardFaturamento(),
-            const SizedBox(height: 6),
             _heroTotal(),
+            const SizedBox(height: 6),
+            _cardFaturamento(),
             const SizedBox(height: 6),
             _cardIndicadores(),
             const SizedBox(height: 6),
@@ -867,14 +878,14 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        _secHeader('ABATIMENTO', _orange),
+        _secHeader('DESCONTOS', _orange),
         if (abatimento > 0)
           Text('- ${_fmt(abatimento)}', style: const TextStyle(fontSize: 11, color: _muted)),
       ]),
       const SizedBox(height: 8),
       for (int i = 0; i < _abatimentoCtrl.length; i++)
         _simpleRow(_abatimentoCtrl[i], '0,00', () => _removeAbatimento(i)),
-      _addBtn('ADICIONAR ABATIMENTO', _addAbatimento, _orange),
+      _addBtn('ADICIONAR DESCONTO', _addAbatimento, _orange),
     ],
   ));
 
@@ -980,13 +991,14 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
 class _FecharDiaSheet extends StatefulWidget {
   final String token;
   final double total, km, horas, porKm, porHora;
-  final String appsJson;
+  final String appsJson, kmJson, horasJson;
   final String Function(double) fmtFn;
   final String Function(double) fmtHorasFn;
   const _FecharDiaSheet({
     required this.token, required this.total, required this.km,
     required this.horas, required this.porKm, required this.porHora,
-    required this.appsJson, required this.fmtFn, required this.fmtHorasFn,
+    required this.appsJson, required this.kmJson, required this.horasJson,
+    required this.fmtFn, required this.fmtHorasFn,
   });
   @override
   State<_FecharDiaSheet> createState() => _FecharDiaSheetState();
@@ -1024,6 +1036,8 @@ class _FecharDiaSheetState extends State<_FecharDiaSheet> {
         'ganho_por_km':   widget.porKm,
         'ganho_por_hora': widget.porHora,
         'apps_json':      widget.appsJson,
+        'km_json':        widget.kmJson,
+        'horas_json':     widget.horasJson,
       });
       if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
@@ -1224,11 +1238,6 @@ class _RankingTabState extends State<RankingTab> {
         title: const Text('RANKING',
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 2.5, color: _muted)),
         centerTitle: true,
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.refresh_rounded, color: _muted, size: 20),
-              onPressed: refresh),
-        ],
       ),
       body: RefreshIndicator(
         color: _blue, backgroundColor: _surface,
@@ -1258,28 +1267,37 @@ class _RankingTabState extends State<RankingTab> {
       ('mes', 'Mês'),
       ('geral', 'Geral'),
     ];
-    return Row(
-      children: opcoes.map((o) {
-        final selected = _periodo == o.$1;
-        return Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: GestureDetector(
-            onTap: () { setState(() { _periodo = o.$1; _ranking = []; }); _loadRanking(); },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: selected ? const Color(0xFF1A2F4A) : _surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: selected ? _blue : _border),
+    return Container(
+      height: 36,
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _border),
+      ),
+      child: Row(
+        children: opcoes.map((o) {
+          final selected = _periodo == o.$1;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () { setState(() { _periodo = o.$1; _ranking = []; }); _loadRanking(); },
+              child: Container(
+                margin: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: selected ? const Color(0xFF1A2F4A) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Center(
+                  child: Text(o.$2,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                          color: selected ? _blue : _dim)),
+                ),
               ),
-              child: Text(o.$2,
-                  style: TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w500,
-                      color: selected ? _blue : _dim)),
             ),
-          ),
-        );
-      }).toList(),
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -1542,9 +1560,10 @@ class _EditarJornadaSheet extends StatefulWidget {
 }
 
 class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
-  late TextEditingController _fatCtrl;
-  late TextEditingController _kmCtrl;
-  late TextEditingController _horasCtrl;
+  List<TextEditingController> _nomesCtrl   = [];
+  List<TextEditingController> _valoresCtrl = [];
+  List<TextEditingController> _kmCtrl      = [];
+  List<TextEditingController> _horasCtrl   = [];
   late DateTime _date;
   bool _loading = false;
   String? _error;
@@ -1552,17 +1571,112 @@ class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
   @override
   void initState() {
     super.initState();
-    _fatCtrl  = TextEditingController(text: (widget.jornada['faturamento'] as num?)?.toStringAsFixed(2).replaceAll('.', ',') ?? '');
-    _kmCtrl   = TextEditingController(text: (widget.jornada['km'] as num?)?.toString() ?? '');
-    _horasCtrl = TextEditingController(text: (widget.jornada['horas'] as num?)?.toString() ?? '');
+    final appsRaw = widget.jornada['apps_json'] as String? ?? '[]';
+    List<dynamic> apps = [];
+    try { apps = jsonDecode(appsRaw) as List; } catch (_) {}
+
+    if (apps.isEmpty) {
+      final fat = (widget.jornada['faturamento'] as num?)?.toDouble() ?? 0;
+      _nomesCtrl   = [TextEditingController(text: '')];
+      _valoresCtrl = [TextEditingController(
+          text: fat > 0 ? fat.toStringAsFixed(2).replaceAll('.', ',') : '')];
+    } else {
+      _nomesCtrl   = apps.map<TextEditingController>(
+          (a) => TextEditingController(text: a['nome'] as String? ?? '')).toList();
+      _valoresCtrl = apps.map<TextEditingController>((a) {
+        final v = (a['valor'] as num?)?.toDouble() ?? 0;
+        return TextEditingController(
+            text: v > 0 ? v.toStringAsFixed(2).replaceAll('.', ',') : '');
+      }).toList();
+    }
+
+    // KM — parse km_json, fallback para valor total
+    final kmRaw = widget.jornada['km_json'] as String? ?? '[]';
+    List<dynamic> kmList = [];
+    try { kmList = jsonDecode(kmRaw) as List; } catch (_) {}
+    if (kmList.isEmpty) {
+      final kmVal = (widget.jornada['km'] as num?)?.toDouble() ?? 0;
+      _kmCtrl = [TextEditingController(
+          text: kmVal > 0 ? (kmVal % 1 == 0 ? kmVal.toInt().toString() : kmVal.toStringAsFixed(1)) : '')];
+    } else {
+      _kmCtrl = kmList.map<TextEditingController>((v) {
+        final d = (v as num?)?.toDouble() ?? 0;
+        return TextEditingController(
+            text: d > 0 ? (d % 1 == 0 ? d.toInt().toString() : d.toStringAsFixed(1)) : '');
+      }).toList();
+    }
+
+    // Horas — parse horas_json, fallback para valor total
+    final horasRaw = widget.jornada['horas_json'] as String? ?? '[]';
+    List<dynamic> horasList = [];
+    try { horasList = jsonDecode(horasRaw) as List; } catch (_) {}
+    if (horasList.isEmpty) {
+      final hVal = (widget.jornada['horas'] as num?)?.toDouble() ?? 0;
+      String horasText = '';
+      if (hVal > 0) {
+        final hInt = hVal.floor();
+        final mInt = ((hVal - hInt) * 60).round();
+        horasText = '${hInt.toString().padLeft(2, '0')}:${mInt.toString().padLeft(2, '0')}';
+      }
+      _horasCtrl = [TextEditingController(text: horasText)];
+    } else {
+      _horasCtrl = horasList.map<TextEditingController>((v) {
+        final h = (v as num?)?.toDouble() ?? 0;
+        if (h <= 0) return TextEditingController(text: '');
+        final hInt = h.floor();
+        final mInt = ((h - hInt) * 60).round();
+        return TextEditingController(
+            text: '${hInt.toString().padLeft(2, '0')}:${mInt.toString().padLeft(2, '0')}');
+      }).toList();
+    }
+
     try { _date = DateTime.parse(widget.jornada['data'] as String? ?? ''); }
     catch (_) { _date = DateTime.now(); }
   }
 
   @override
-  void dispose() { _fatCtrl.dispose(); _kmCtrl.dispose(); _horasCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    for (final c in [..._nomesCtrl, ..._valoresCtrl, ..._kmCtrl, ..._horasCtrl]) c.dispose();
+    super.dispose();
+  }
 
   double _p(String s) => double.tryParse(s.replaceAll(',', '.')) ?? 0;
+  double _parseHoras(String t) {
+    if (t.contains(':')) {
+      final pts = t.split(':');
+      return _p(pts[0]) + (pts.length > 1 ? _p(pts[1]) / 60.0 : 0);
+    }
+    return _p(t);
+  }
+  String _fmtHoras(double h) {
+    final hI = h.floor(); final mI = ((h - hI) * 60).round();
+    return '$hI:${mI.toString().padLeft(2, '0')}h';
+  }
+
+  double get _total    => _valoresCtrl.fold(0.0, (s, c) => s + _p(c.text));
+  double get _totalKm  => _kmCtrl.fold(0.0, (s, c) => s + _p(c.text));
+  double get _totalH   => _horasCtrl.fold(0.0, (s, c) => s + _parseHoras(c.text));
+
+  void _addApp() => setState(() {
+    _nomesCtrl.add(TextEditingController());
+    _valoresCtrl.add(TextEditingController());
+  });
+  void _removeApp(int i) {
+    _nomesCtrl[i].dispose(); _valoresCtrl[i].dispose();
+    setState(() { _nomesCtrl.removeAt(i); _valoresCtrl.removeAt(i); });
+  }
+  void _addKm() => setState(() => _kmCtrl.add(TextEditingController()));
+  void _removeKm(int i) {
+    if (_kmCtrl.length <= 1) { _kmCtrl[0].text = ''; return; }
+    _kmCtrl[i].dispose();
+    setState(() => _kmCtrl.removeAt(i));
+  }
+  void _addHora() => setState(() => _horasCtrl.add(TextEditingController()));
+  void _removeHora(int i) {
+    if (_horasCtrl.length <= 1) { _horasCtrl[0].text = ''; return; }
+    _horasCtrl[i].dispose();
+    setState(() => _horasCtrl.removeAt(i));
+  }
 
   Future<void> _pickDate() async {
     final d = await showDatePicker(
@@ -1580,11 +1694,15 @@ class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
   }
 
   Future<void> _salvar() async {
-    final fat = _p(_fatCtrl.text);
-    if (fat <= 0) { setState(() => _error = 'Informe o faturamento'); return; }
+    final fat = _total;
+    if (fat <= 0) { setState(() => _error = 'Informe pelo menos um valor'); return; }
     setState(() { _loading = true; _error = null; });
-    final km    = _p(_kmCtrl.text);
-    final horas = _p(_horasCtrl.text);
+    final km    = _totalKm;
+    final horas = _totalH;
+    final apps  = List.generate(_nomesCtrl.length,
+        (i) => {'nome': _nomesCtrl[i].text, 'valor': _p(_valoresCtrl[i].text)});
+    final kmVals    = _kmCtrl.map((c) => _p(c.text)).toList();
+    final horasVals = _horasCtrl.map((c) => _parseHoras(c.text)).toList();
     try {
       await _api.editarJornada(widget.token, widget.jornada['id'] as String, {
         'data':           '${_date.year}-${_date.month.toString().padLeft(2,'0')}-${_date.day.toString().padLeft(2,'0')}',
@@ -1593,6 +1711,9 @@ class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
         'faturamento':    fat,
         'ganho_por_km':   km > 0 ? fat / km : 0,
         'ganho_por_hora': horas > 0 ? fat / horas : 0,
+        'apps_json':      jsonEncode(apps),
+        'km_json':        jsonEncode(kmVals),
+        'horas_json':     jsonEncode(horasVals),
       });
       if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
@@ -1650,98 +1771,157 @@ class _EditarJornadaSheetState extends State<_EditarJornadaSheet> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.of(context).viewInsets.bottom + 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 12),
-          Center(child: Container(width: 40, height: 4,
-              decoration: BoxDecoration(color: _border, borderRadius: BorderRadius.circular(2)))),
-          const SizedBox(height: 20),
-          Row(children: [
-            const Expanded(child: Text('EDITAR JORNADA',
-                style: TextStyle(fontSize: 11, letterSpacing: 3, color: _muted, fontWeight: FontWeight.w600))),
-            IconButton(
-              icon: const Icon(Icons.delete_outline_rounded, color: _red, size: 20),
-              onPressed: _loading ? null : _excluir,
-              padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-            ),
-          ]),
-          const SizedBox(height: 16),
-
-          // Data
-          GestureDetector(
-            onTap: _pickDate,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                  color: _surface, borderRadius: BorderRadius.circular(10), border: Border.all(color: _border)),
-              child: Row(children: [
-                const Icon(Icons.calendar_today_rounded, size: 15, color: _dim),
-                const SizedBox(width: 10),
-                Text(_fmtDate(_date),
-                    style: const TextStyle(fontSize: 14, color: _txt, fontWeight: FontWeight.w500)),
-                const Spacer(),
-                const Text('Alterar', style: TextStyle(fontSize: 12, color: _blue)),
-              ]),
-            ),
-          ),
-          const SizedBox(height: 10),
-
-          // Faturamento
-          TextField(
-            controller: _fatCtrl,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
-            style: const TextStyle(fontSize: 14, color: _txt),
-            decoration: _dec('Faturamento (R\$)'),
-            onTap: () => _fatCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _fatCtrl.text.length),
-          ),
-          const SizedBox(height: 8),
-
-          Row(children: [
-            Expanded(child: TextField(
-              controller: _kmCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
-              style: const TextStyle(fontSize: 14, color: _txt),
-              decoration: _dec('KM rodados'),
-              onTap: () => _kmCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _kmCtrl.text.length),
-            )),
-            const SizedBox(width: 8),
-            Expanded(child: TextField(
-              controller: _horasCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
-              style: const TextStyle(fontSize: 14, color: _txt),
-              decoration: _dec('Horas trabalhadas'),
-              onTap: () => _horasCtrl.selection = TextSelection(baseOffset: 0, extentOffset: _horasCtrl.text.length),
-            )),
-          ]),
-          const SizedBox(height: 12),
-
-          if (_error != null) ...[
-            Text(_error!, style: const TextStyle(color: _red, fontSize: 12)),
-            const SizedBox(height: 8),
-          ],
-
-          SizedBox(
-            width: double.infinity, height: 48,
-            child: ElevatedButton(
-              onPressed: _loading ? null : _salvar,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _blue, foregroundColor: Colors.white, elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 12),
+            Center(child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: _border, borderRadius: BorderRadius.circular(2)))),
+            const SizedBox(height: 20),
+            Row(children: [
+              const Expanded(child: Text('EDITAR JORNADA',
+                  style: TextStyle(fontSize: 11, letterSpacing: 3, color: _muted, fontWeight: FontWeight.w600))),
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded, color: _red, size: 20),
+                onPressed: _loading ? null : _excluir,
+                padding: EdgeInsets.zero, constraints: const BoxConstraints(),
               ),
-              child: _loading
-                  ? const SizedBox(width: 18, height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('SALVAR',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 1.5)),
+            ]),
+            const SizedBox(height: 16),
+
+            // Data
+            GestureDetector(
+              onTap: _pickDate,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                    color: _surface, borderRadius: BorderRadius.circular(10), border: Border.all(color: _border)),
+                child: Row(children: [
+                  const Icon(Icons.calendar_today_rounded, size: 15, color: _dim),
+                  const SizedBox(width: 10),
+                  Text(_fmtDate(_date),
+                      style: const TextStyle(fontSize: 14, color: _txt, fontWeight: FontWeight.w500)),
+                  const Spacer(),
+                  const Text('Alterar', style: TextStyle(fontSize: 12, color: _blue)),
+                ]),
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+
+            // Apps
+            const Text('FATURAMENTO POR APP',
+                style: TextStyle(fontSize: 10, letterSpacing: 1.5, color: _muted, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+
+            ...List.generate(_nomesCtrl.length, (i) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: _nomesCtrl[i],
+                    style: const TextStyle(fontSize: 13, color: _txt),
+                    decoration: _dec('App (ex: Uber)'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _valoresCtrl[i],
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
+                    style: const TextStyle(fontSize: 13, color: _txt),
+                    decoration: _dec('Valor (R\$)'),
+                    onTap: () => _valoresCtrl[i].selection = TextSelection(
+                        baseOffset: 0, extentOffset: _valoresCtrl[i].text.length),
+                  ),
+                ),
+                if (_nomesCtrl.length > 1) ...[
+                  const SizedBox(width: 6),
+                  GestureDetector(
+                    onTap: () => _removeApp(i),
+                    child: const Icon(Icons.close_rounded, size: 16, color: _muted),
+                  ),
+                ],
+              ]),
+            )),
+
+            GestureDetector(
+              onTap: _addApp,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4),
+                child: Row(children: [
+                  Icon(Icons.add_rounded, size: 14, color: _blue),
+                  SizedBox(width: 4),
+                  Text('Adicionar app',
+                      style: TextStyle(fontSize: 12, color: _blue, fontWeight: FontWeight.w500)),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // KM e Horas
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('KM RODADOS',
+                      style: TextStyle(fontSize: 10, color: _muted, letterSpacing: 1.2, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _kmCtrl[0],
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
+                    style: const TextStyle(fontSize: 14, color: _txt),
+                    decoration: _dec('0'),
+                    onTap: () => _kmCtrl[0].selection = TextSelection(baseOffset: 0, extentOffset: _kmCtrl[0].text.length),
+                  ),
+                ]),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('HORAS DE TRABALHO',
+                      style: TextStyle(fontSize: 10, color: _muted, letterSpacing: 1.2, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _horasCtrl[0],
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [_TimeFormatter()],
+                    style: const TextStyle(fontSize: 14, color: _txt),
+                    decoration: _dec('0:00'),
+                    onTap: () => _horasCtrl[0].selection = TextSelection(baseOffset: 0, extentOffset: _horasCtrl[0].text.length),
+                  ),
+                ]),
+              ),
+            ]),
+            const SizedBox(height: 12),
+
+            if (_error != null) ...[
+              Text(_error!, style: const TextStyle(color: _red, fontSize: 12)),
+              const SizedBox(height: 8),
+            ],
+
+            SizedBox(
+              width: double.infinity, height: 48,
+              child: ElevatedButton(
+                onPressed: _loading ? null : _salvar,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _blue, foregroundColor: Colors.white, elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: _loading
+                    ? const SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('SALVAR',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 1.5)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1916,13 +2096,17 @@ class _CompararSheetState extends State<_CompararSheet> {
       ('geral',  'Geral'),
       ('custom', 'Período'),
     ];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    return Container(
+      height: 36,
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _border),
+      ),
       child: Row(
         children: opcoes.map((o) {
           final selected = o.$1 == 'custom' ? _custom : (!_custom && _periodo == o.$1);
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
+          return Expanded(
             child: GestureDetector(
               onTap: () {
                 if (o.$1 == 'custom') {
@@ -1933,16 +2117,18 @@ class _CompararSheetState extends State<_CompararSheet> {
                 }
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                margin: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
-                  color: selected ? const Color(0xFF1A2F4A) : _surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: selected ? _blue : _border),
+                  color: selected ? const Color(0xFF1A2F4A) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(7),
                 ),
-                child: Text(o.$2,
-                    style: TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w500,
-                        color: selected ? _blue : _dim)),
+                child: Center(
+                  child: Text(o.$2,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                          color: selected ? _blue : _dim)),
+                ),
               ),
             ),
           );

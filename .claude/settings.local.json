@@ -60,7 +60,17 @@
       "Bash(git --version)",
       "Bash(docker --version)",
       "Bash(git config:*)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(psql --version)",
+      "Bash(python -c \"from main import app; print\\('OK'\\)\")",
+      "Bash(uvicorn main:app --host 0.0.0.0 --port 8000)",
+      "Bash(curl -sf http://localhost:8000/)",
+      "Bash(curl -s -X POST http://localhost:8000/auth/register -H \"Content-Type: application/json\" -d '{\"nome\":\"TestLocal\",\"pin\":\"1234\"}')",
+      "Bash(powershell -Command \"Get-NetIPAddress -AddressFamily IPv4 | Select-Object IPAddress | Format-Table -HideTableHeaders\")",
+      "Bash(winget install:*)",
+      "Bash('/c/Program Files/GitHub CLI/gh.exe' auth status)",
+      "Bash(sed -i \"s|const _apiBase = 'http://192.168.15.125:8000';|const _apiBase = 'https://calculadora-motorista-api.onrender.com';|\" lib/main.dart)",
+      "Bash('/c/Program Files/GitHub CLI/gh.exe' repo create calculadora-motorista --private --source=. --remote=origin --push)"
     ]
   }
 }

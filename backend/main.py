@@ -2,8 +2,6 @@ import os
 import uuid
 import bcrypt
 import jwt
-import psycopg2
-import psycopg2.extras
 from datetime import datetime, timedelta, date
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -14,10 +12,56 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-troque-em-producao-2024!')
+SECRET_KEY      = os.getenv('SECRET_KEY', 'dev-secret-troque-em-producao-2024!')
 TOKEN_EXPIRE_DAYS = int(os.getenv('TOKEN_EXPIRE_DAYS', '30'))
-DATABASE_URL = os.getenv('DATABASE_URL', '')
-CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*').split(',')
+DATABASE_URL    = os.getenv('DATABASE_URL', '')
+DB_PATH         = os.getenv('DB_PATH', 'motoristas.db')
+CORS_ORIGINS    = os.getenv('CORS_ORIGINS', '*').split(',')
+
+# ── Modo banco (SQLite local / PostgreSQL produção) ───────────────────────────
+
+USE_PG = bool(DATABASE_URL)
+
+if USE_PG:
+    import psycopg2
+    PH = '%s'
+    _IntegrityError = psycopg2.IntegrityError
+else:
+    import sqlite3
+    PH = '?'
+    _IntegrityError = sqlite3.IntegrityError
+
+def db():
+    if USE_PG:
+        return psycopg2.connect(DATABASE_URL)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def _one(cur):
+    r = cur.fetchone()
+    if r is None:
+        return None
+    if USE_PG:
+        cols = [d[0] for d in cur.description]
+        return dict(zip(cols, r))
+    return dict(r)
+
+def _all(cur):
+    rows = cur.fetchall()
+    if USE_PG:
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in rows]
+    return [dict(r) for r in rows]
+
+def _exec(conn, sql, params=()):
+    if USE_PG:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return cur
+    return conn.execute(sql, params)
+
+# ── App ────────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title='Calculadora Motorista API', docs_url=None, redoc_url=None)
 
@@ -42,32 +86,18 @@ async def log_requests(request: Request, call_next):
 
 # ── Banco de dados ─────────────────────────────────────────────────────────────
 
-def db():
-    conn = psycopg2.connect(DATABASE_URL)
-    return conn
-
-def row_to_dict(cursor, row):
-    if row is None:
-        return None
-    cols = [d[0] for d in cursor.description]
-    return dict(zip(cols, row))
-
-def rows_to_list(cursor, rows):
-    cols = [d[0] for d in cursor.description]
-    return [dict(zip(cols, row)) for row in rows]
-
 def init_db():
     conn = db()
-    cur = conn.cursor()
-    cur.execute("""
+    nocase = '' if USE_PG else ' COLLATE NOCASE'
+    _exec(conn, f"""
         CREATE TABLE IF NOT EXISTS usuarios (
             id        TEXT PRIMARY KEY,
-            nome      TEXT UNIQUE NOT NULL,
+            nome      TEXT UNIQUE NOT NULL{nocase},
             pin_hash  TEXT NOT NULL,
             criado_em TEXT NOT NULL
         )
     """)
-    cur.execute("""
+    _exec(conn, """
         CREATE TABLE IF NOT EXISTS jornadas (
             id             TEXT PRIMARY KEY,
             usuario_id     TEXT NOT NULL,
@@ -84,7 +114,6 @@ def init_db():
         )
     """)
     conn.commit()
-    cur.close()
     conn.close()
 
 init_db()
@@ -147,31 +176,26 @@ def register(req: AuthReq):
     pin_hash = bcrypt.hashpw(req.pin.encode(), bcrypt.gensalt()).decode()
     uid = str(uuid.uuid4())
     conn = db()
-    cur = conn.cursor()
     try:
-        cur.execute(
-            'INSERT INTO usuarios (id, nome, pin_hash, criado_em) VALUES (%s, %s, %s, %s)',
+        _exec(conn,
+            f'INSERT INTO usuarios (id, nome, pin_hash, criado_em) VALUES ({PH},{PH},{PH},{PH})',
             (uid, nome, pin_hash, datetime.utcnow().isoformat())
         )
         conn.commit()
-    except psycopg2.IntegrityError:
-        conn.rollback()
+    except _IntegrityError:
         raise HTTPException(409, 'Nome já cadastrado')
     finally:
-        cur.close()
         conn.close()
     return {'token': make_token(uid, nome), 'nome': nome, 'id': uid}
 
 @app.post('/auth/login')
 def login(req: AuthReq):
     conn = db()
-    cur = conn.cursor()
-    cur.execute(
-        'SELECT * FROM usuarios WHERE LOWER(nome) = LOWER(%s)',
+    cur = _exec(conn,
+        f'SELECT * FROM usuarios WHERE LOWER(nome) = LOWER({PH})',
         (req.nome.strip(),)
     )
-    row = row_to_dict(cur, cur.fetchone())
-    cur.close()
+    row = _one(cur)
     conn.close()
     if not row or not bcrypt.checkpw(req.pin.encode(), row['pin_hash'].encode()):
         raise HTTPException(401, 'Nome ou PIN incorreto')
@@ -181,12 +205,11 @@ def login(req: AuthReq):
 def criar_jornada(req: JornadaReq, u=Depends(current_user)):
     jid = str(uuid.uuid4())
     conn = db()
-    cur = conn.cursor()
-    cur.execute("""
+    _exec(conn, f"""
         INSERT INTO jornadas
             (id, usuario_id, usuario_nome, data, km, horas, faturamento,
              ganho_por_km, ganho_por_hora, apps_json, criado_em)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH})
     """, (
         jid, u['id'], u['nome'], req.data,
         req.km, req.horas, req.faturamento,
@@ -194,63 +217,52 @@ def criar_jornada(req: JornadaReq, u=Depends(current_user)):
         req.apps_json, datetime.utcnow().isoformat()
     ))
     conn.commit()
-    cur.close()
     conn.close()
     return {'id': jid, 'message': 'Jornada salva'}
 
 @app.get('/jornadas/minhas')
 def minhas_jornadas(u=Depends(current_user)):
     conn = db()
-    cur = conn.cursor()
-    cur.execute(
-        'SELECT * FROM jornadas WHERE usuario_id = %s ORDER BY data DESC',
+    cur = _exec(conn,
+        f'SELECT * FROM jornadas WHERE usuario_id = {PH} ORDER BY data DESC',
         (u['id'],)
     )
-    result = rows_to_list(cur, cur.fetchall())
-    cur.close()
+    result = _all(cur)
     conn.close()
     return result
 
 @app.put('/jornadas/{jid}')
 def editar_jornada(jid: str, req: JornadaUpdate, u=Depends(current_user)):
     conn = db()
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM jornadas WHERE id = %s', (jid,))
-    row = row_to_dict(cur, cur.fetchone())
+    cur = _exec(conn, f'SELECT * FROM jornadas WHERE id = {PH}', (jid,))
+    row = _one(cur)
     if not row:
-        cur.close()
         conn.close()
         raise HTTPException(404, 'Jornada não encontrada')
     if row['usuario_id'] != u['id']:
-        cur.close()
         conn.close()
         raise HTTPException(403, 'Sem permissão')
     ups = {k: v for k, v in req.model_dump().items() if v is not None}
     if ups:
-        sql = 'UPDATE jornadas SET ' + ', '.join(f'{k}=%s' for k in ups) + ' WHERE id=%s'
-        cur.execute(sql, list(ups.values()) + [jid])
+        sql = 'UPDATE jornadas SET ' + ', '.join(f'{k}={PH}' for k in ups) + f' WHERE id={PH}'
+        _exec(conn, sql, list(ups.values()) + [jid])
         conn.commit()
-    cur.close()
     conn.close()
     return {'message': 'Atualizado'}
 
 @app.delete('/jornadas/{jid}')
 def deletar_jornada(jid: str, u=Depends(current_user)):
     conn = db()
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM jornadas WHERE id = %s', (jid,))
-    row = row_to_dict(cur, cur.fetchone())
+    cur = _exec(conn, f'SELECT * FROM jornadas WHERE id = {PH}', (jid,))
+    row = _one(cur)
     if not row:
-        cur.close()
         conn.close()
         raise HTTPException(404, 'Não encontrada')
     if row['usuario_id'] != u['id']:
-        cur.close()
         conn.close()
         raise HTTPException(403, 'Sem permissão')
-    cur.execute('DELETE FROM jornadas WHERE id = %s', (jid,))
+    _exec(conn, f'DELETE FROM jornadas WHERE id = {PH}', (jid,))
     conn.commit()
-    cur.close()
     conn.close()
     return {'message': 'Deletado'}
 
@@ -263,8 +275,7 @@ def comparar(
     u=Depends(current_user)
 ):
     def stats(nome: str, conn):
-        cur = conn.cursor()
-        cur.execute("""
+        cur = _exec(conn, f"""
             SELECT
                 COALESCE(SUM(faturamento), 0)  AS total_faturamento,
                 COALESCE(SUM(km), 0)           AS total_km,
@@ -273,11 +284,10 @@ def comparar(
                 CASE WHEN SUM(horas) > 0 THEN SUM(faturamento) / SUM(horas) ELSE 0 END AS ganho_hora,
                 COUNT(*)                       AS total_jornadas
             FROM jornadas
-            WHERE LOWER(usuario_nome) = LOWER(%s)
-              AND data >= %s AND data <= %s
+            WHERE LOWER(usuario_nome) = LOWER({PH})
+              AND data >= {PH} AND data <= {PH}
         """, (nome, desde, ate))
-        row = row_to_dict(cur, cur.fetchone())
-        cur.close()
+        row = _one(cur)
         return {k: (v if v is not None else 0) for k, v in row.items()}
 
     conn = db()
@@ -302,8 +312,7 @@ def ranking(periodo: str = 'mes', u=Depends(current_user)):
         desde = '1970-01-01'
 
     conn = db()
-    cur = conn.cursor()
-    cur.execute("""
+    cur = _exec(conn, f"""
         SELECT
             usuario_nome,
             SUM(faturamento)  AS total_faturamento,
@@ -313,11 +322,10 @@ def ranking(periodo: str = 'mes', u=Depends(current_user)):
             CASE WHEN SUM(horas) > 0 THEN SUM(faturamento) / SUM(horas) ELSE 0 END AS ganho_hora,
             COUNT(*)          AS total_jornadas
         FROM jornadas
-        WHERE data >= %s
+        WHERE data >= {PH}
         GROUP BY usuario_id, usuario_nome
         ORDER BY total_faturamento DESC
     """, (desde,))
-    result = rows_to_list(cur, cur.fetchall())
-    cur.close()
+    result = _all(cur)
     conn.close()
     return result

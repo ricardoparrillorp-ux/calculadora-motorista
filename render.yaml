@@ -14,3 +14,18 @@ services:
         value: "30"
       - key: CORS_ORIGINS
         value: "*"
+
+  - type: web
+    name: calculadora-motorista
+    branch: master
+    runtime: static
+    staticPublishPath: ./build/web
+    plan: free
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
