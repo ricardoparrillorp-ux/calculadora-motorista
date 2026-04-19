@@ -124,6 +124,13 @@ def init_db():
         except Exception:
             if USE_PG:
                 conn.rollback()
+    for col, default in [("security_question", "DEFAULT ''"), ("security_answer_hash", "DEFAULT ''")]:
+        try:
+            _exec(conn, f"ALTER TABLE usuarios ADD COLUMN {col} TEXT {default}")
+            conn.commit()
+        except Exception:
+            if USE_PG:
+                conn.rollback()
     conn.close()
 
 init_db()
@@ -155,6 +162,17 @@ class AuthReq(BaseModel):
     nome: str
     pin: str
 
+class RegisterReq(BaseModel):
+    nome: str
+    pin: str
+    security_question: str
+    security_answer: str
+
+class ResetPinReq(BaseModel):
+    nome: str
+    security_answer: str
+    new_pin: str
+
 class JornadaReq(BaseModel):
     data: str
     km: float = 0
@@ -180,20 +198,25 @@ class JornadaUpdate(BaseModel):
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.post('/auth/register')
-def register(req: AuthReq):
+def register(req: RegisterReq):
     nome = req.nome.strip()
     if len(nome) < 2:
         raise HTTPException(400, 'Nome muito curto')
     if len(req.pin) != 4 or not req.pin.isdigit():
         raise HTTPException(400, 'PIN deve ter exatamente 4 dígitos numéricos')
+    if len(req.security_question.strip()) < 5:
+        raise HTTPException(400, 'Pergunta de segurança muito curta')
+    if not req.security_answer.strip():
+        raise HTTPException(400, 'Resposta não pode ser vazia')
 
-    pin_hash = bcrypt.hashpw(req.pin.encode(), bcrypt.gensalt()).decode()
+    pin_hash    = bcrypt.hashpw(req.pin.encode(), bcrypt.gensalt()).decode()
+    answer_hash = bcrypt.hashpw(req.security_answer.strip().lower().encode(), bcrypt.gensalt()).decode()
     uid = str(uuid.uuid4())
     conn = db()
     try:
         _exec(conn,
-            f'INSERT INTO usuarios (id, nome, pin_hash, criado_em) VALUES ({PH},{PH},{PH},{PH})',
-            (uid, nome, pin_hash, datetime.utcnow().isoformat())
+            f'INSERT INTO usuarios (id, nome, pin_hash, security_question, security_answer_hash, criado_em) VALUES ({PH},{PH},{PH},{PH},{PH},{PH})',
+            (uid, nome, pin_hash, req.security_question.strip(), answer_hash, datetime.utcnow().isoformat())
         )
         conn.commit()
     except _IntegrityError:
@@ -201,6 +224,36 @@ def register(req: AuthReq):
     finally:
         conn.close()
     return {'token': make_token(uid, nome), 'nome': nome, 'id': uid}
+
+@app.get('/auth/security-question')
+def get_security_question(nome: str):
+    conn = db()
+    cur = _exec(conn, f'SELECT security_question FROM usuarios WHERE LOWER(nome) = LOWER({PH})', (nome.strip(),))
+    row = _one(cur)
+    conn.close()
+    if not row:
+        raise HTTPException(404, 'Usuário não encontrado')
+    q = row.get('security_question') or ''
+    if not q:
+        raise HTTPException(404, 'Este usuário não tem pergunta de segurança cadastrada')
+    return {'security_question': q}
+
+@app.post('/auth/reset-pin')
+def reset_pin(req: ResetPinReq):
+    if len(req.new_pin) != 4 or not req.new_pin.isdigit():
+        raise HTTPException(400, 'PIN deve ter exatamente 4 dígitos')
+    conn = db()
+    cur = _exec(conn, f'SELECT * FROM usuarios WHERE LOWER(nome) = LOWER({PH})', (req.nome.strip(),))
+    row = _one(cur)
+    answer_hash = row.get('security_answer_hash', '') if row else ''
+    if not row or not answer_hash or not bcrypt.checkpw(req.security_answer.strip().lower().encode(), answer_hash.encode()):
+        conn.close()
+        raise HTTPException(401, 'Nome ou resposta incorretos')
+    new_pin_hash = bcrypt.hashpw(req.new_pin.encode(), bcrypt.gensalt()).decode()
+    _exec(conn, f'UPDATE usuarios SET pin_hash = {PH} WHERE id = {PH}', (new_pin_hash, row['id']))
+    conn.commit()
+    conn.close()
+    return {'token': make_token(row['id'], row['nome']), 'nome': row['nome'], 'id': row['id']}
 
 @app.post('/auth/login')
 def login(req: AuthReq):
