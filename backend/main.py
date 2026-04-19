@@ -109,11 +109,21 @@ def init_db():
             ganho_por_km   REAL DEFAULT 0,
             ganho_por_hora REAL DEFAULT 0,
             apps_json      TEXT DEFAULT '[]',
+            km_json        TEXT DEFAULT '[]',
+            horas_json     TEXT DEFAULT '[]',
             criado_em      TEXT NOT NULL,
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
         )
     """)
-    conn.commit()
+    conn.commit()  # garante que os CREATE TABLE são persistidos
+    # Migração: adicionar colunas novas se ainda não existirem
+    for col, default in [('km_json', "DEFAULT '[]'"), ('horas_json', "DEFAULT '[]'")]:
+        try:
+            _exec(conn, f"ALTER TABLE jornadas ADD COLUMN {col} TEXT {default}")
+            conn.commit()
+        except Exception:
+            if USE_PG:
+                conn.rollback()
     conn.close()
 
 init_db()
@@ -153,6 +163,8 @@ class JornadaReq(BaseModel):
     ganho_por_km: float = 0
     ganho_por_hora: float = 0
     apps_json: str = '[]'
+    km_json: str = '[]'
+    horas_json: str = '[]'
 
 class JornadaUpdate(BaseModel):
     data: Optional[str] = None
@@ -162,6 +174,8 @@ class JornadaUpdate(BaseModel):
     ganho_por_km: Optional[float] = None
     ganho_por_hora: Optional[float] = None
     apps_json: Optional[str] = None
+    km_json: Optional[str] = None
+    horas_json: Optional[str] = None
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
@@ -208,13 +222,14 @@ def criar_jornada(req: JornadaReq, u=Depends(current_user)):
     _exec(conn, f"""
         INSERT INTO jornadas
             (id, usuario_id, usuario_nome, data, km, horas, faturamento,
-             ganho_por_km, ganho_por_hora, apps_json, criado_em)
-        VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH})
+             ganho_por_km, ganho_por_hora, apps_json, km_json, horas_json, criado_em)
+        VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH})
     """, (
         jid, u['id'], u['nome'], req.data,
         req.km, req.horas, req.faturamento,
         req.ganho_por_km, req.ganho_por_hora,
-        req.apps_json, datetime.utcnow().isoformat()
+        req.apps_json, req.km_json, req.horas_json,
+        datetime.utcnow().isoformat()
     ))
     conn.commit()
     conn.close()
