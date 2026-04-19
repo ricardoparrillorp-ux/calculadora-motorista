@@ -229,8 +229,8 @@ class _LoginScreenState extends State<LoginScreen> {
       widget.onLogin(data['token'] as String, data['nome'] as String);
     } on ApiException catch (e) {
       setState(() { _error = e.message; _pin = ''; _loading = false; });
-    } catch (_) {
-      setState(() { _error = 'Sem conexão com o servidor'; _pin = ''; _loading = false; });
+    } catch (e) {
+      setState(() { _error = e.toString(); _pin = ''; _loading = false; });
     }
   }
 
