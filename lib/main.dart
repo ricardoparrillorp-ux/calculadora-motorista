@@ -7,7 +7,7 @@ import 'dart:convert';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Troque pela URL do seu servidor em produção
-const _apiBase = 'https://calculadora-motorista-api.onrender.com';
+const _apiBase = 'http://localhost:8000';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _bg      = Color(0xFF0D0D0E);
@@ -406,6 +406,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _tab = 0;
   final _rankingKey = GlobalKey<_RankingTabState>();
+  final _calcKey    = GlobalKey<_CalculadoraTabState>();
 
   @override
   Widget build(BuildContext context) {
@@ -415,12 +416,25 @@ class _MainScreenState extends State<MainScreen> {
         index: _tab,
         children: [
           CalculadoraTab(
+            key: _calcKey,
             token: widget.token,
             userName: widget.userName,
             onLogout: widget.onLogout,
-            onJornadaSalva: () => _rankingKey.currentState?.refresh(),
+            onJornadaSalva: () {
+              _rankingKey.currentState?.refresh();
+              setState(() => _tab = 1);
+            },
           ),
-          RankingTab(key: _rankingKey, token: widget.token, userName: widget.userName, onLogout: widget.onLogout),
+          RankingTab(
+            key: _rankingKey,
+            token: widget.token,
+            userName: widget.userName,
+            onLogout: widget.onLogout,
+            onEditarJornada: (jornada) {
+              _calcKey.currentState?.carregarJornada(jornada);
+              setState(() => _tab = 0);
+            },
+          ),
         ],
       ),
       bottomNavigationBar: Container(
@@ -484,6 +498,8 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
   List<TextEditingController> _horasCtrl      = [];
 
   bool _pronto = false;
+  String? _editandoId;
+  String  _editandoData = '';
 
   @override
   void initState() { super.initState(); _carregar(); }
@@ -630,6 +646,90 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
   }
 
   // ── Fechar Dia ────────────────────────────────────────────────────────────
+  // ── Carregar Jornada para Edição ─────────────────────────────────────────
+  void carregarJornada(Map<String, dynamic> j) {
+    for (final c in [..._nomesCtrl, ..._valoresCtrl, ..._abatimentoCtrl, ..._kmCtrl, ..._horasCtrl]) {
+      c.removeListener(_onChange);
+      c.dispose();
+    }
+    final appsRaw = j['apps_json'] as String? ?? '[]';
+    List<dynamic> apps = [];
+    try { apps = jsonDecode(appsRaw) as List; } catch (_) {}
+    List<TextEditingController> nomes, valores;
+    if (apps.isEmpty) {
+      final fat = (j['faturamento'] as num?)?.toDouble() ?? 0;
+      nomes  = [_makeCtrl('')];
+      valores = [_makeCtrl(fat > 0 ? fat.toStringAsFixed(2).replaceAll('.', ',') : '')];
+    } else {
+      nomes  = apps.map<TextEditingController>((a) => _makeCtrl(a['nome'] as String? ?? '')).toList();
+      valores = apps.map<TextEditingController>((a) {
+        final v = (a['valor'] as num?)?.toDouble() ?? 0;
+        return _makeCtrl(v > 0 ? v.toStringAsFixed(2).replaceAll('.', ',') : '');
+      }).toList();
+    }
+    final kmRaw = j['km_json'] as String? ?? '[]';
+    List<dynamic> kmList = [];
+    try { kmList = jsonDecode(kmRaw) as List; } catch (_) {}
+    List<TextEditingController> kmCtrls;
+    if (kmList.isEmpty) {
+      final d = (j['km'] as num?)?.toDouble() ?? 0;
+      kmCtrls = [_makeCtrl(d > 0 ? (d % 1 == 0 ? d.toInt().toString() : d.toStringAsFixed(1)) : '')];
+    } else {
+      kmCtrls = kmList.map<TextEditingController>((v) {
+        final d = (v as num?)?.toDouble() ?? 0;
+        return _makeCtrl(d > 0 ? (d % 1 == 0 ? d.toInt().toString() : d.toStringAsFixed(1)) : '');
+      }).toList();
+    }
+    final horasRaw = j['horas_json'] as String? ?? '[]';
+    List<dynamic> horasList = [];
+    try { horasList = jsonDecode(horasRaw) as List; } catch (_) {}
+    List<TextEditingController> horasCtrls;
+    if (horasList.isEmpty) {
+      final hVal = (j['horas'] as num?)?.toDouble() ?? 0;
+      String ht = '';
+      if (hVal > 0) {
+        final hI = hVal.floor(); final mI = ((hVal - hI) * 60).round();
+        ht = '${hI.toString().padLeft(2,"0")}:${mI.toString().padLeft(2,"0")}';
+      }
+      horasCtrls = [_makeCtrl(ht)];
+    } else {
+      horasCtrls = horasList.map<TextEditingController>((v) {
+        final h = (v as num?)?.toDouble() ?? 0;
+        if (h <= 0) return _makeCtrl('');
+        final hI = h.floor(); final mI = ((h - hI) * 60).round();
+        return _makeCtrl('${hI.toString().padLeft(2,"0")}:${mI.toString().padLeft(2,"0")}');
+      }).toList();
+    }
+    setState(() {
+      _nomesCtrl      = nomes;
+      _valoresCtrl    = valores;
+      _abatimentoCtrl = () {
+        final somaApps = valores.fold(0.0, (s, c) {
+          return s + (double.tryParse(c.text.replaceAll(',', '.')) ?? 0);
+        });
+        final fat = (j['faturamento'] as num?)?.toDouble() ?? 0;
+        final desconto = somaApps - fat;
+        if (desconto > 0.001) {
+          return [_makeCtrl(desconto.toStringAsFixed(2).replaceAll('.', ','))];
+        }
+        return [_makeCtrl('')];
+      }();
+      _kmCtrl         = kmCtrls;
+      _horasCtrl      = horasCtrls;
+      _editandoId     = j['id'] as String?;
+      _editandoData   = j['data'] as String? ?? '';
+    });
+  }
+
+  void _cancelarEdicao() {
+    setState(() {
+      _editandoId   = null;
+      _editandoData = '';
+      for (final c in [..._valoresCtrl, ..._abatimentoCtrl, ..._kmCtrl, ..._horasCtrl]) c.text = '';
+    });
+    _salvar();
+  }
+
   Future<void> _fecharDia() async {
     if (total <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -656,6 +756,45 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
       return _p(t);
     }).toList());
 
+    if (_editandoId != null) {
+      try {
+        await _api.editarJornada(widget.token, _editandoId!, {
+          'km': km,
+          'horas': horas,
+          'faturamento': total,
+          'ganho_por_km': porKm,
+          'ganho_por_hora': porHora,
+          'apps_json': appsJson,
+          'km_json': kmJson,
+          'horas_json': horasJson,
+        });
+        setState(() {
+          _editandoId   = null;
+          _editandoData = '';
+        });
+        widget.onJornadaSalva();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Jornada atualizada com sucesso!',
+                style: TextStyle(color: _green, fontWeight: FontWeight.w600)),
+            backgroundColor: _surface,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao atualizar: $e'),
+            backgroundColor: _red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
     final saved = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -677,8 +816,9 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Jornada salva com sucesso!'),
-          backgroundColor: Color(0xFF1A3A2A),
+          content: Text('Jornada salva com sucesso!',
+              style: TextStyle(color: _green, fontWeight: FontWeight.w600)),
+          backgroundColor: _surface,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -743,23 +883,68 @@ class _CalculadoraTabState extends State<CalculadoraTab> {
   }
 
   Widget _btnFecharDia() {
-    return SizedBox(
-      width: double.infinity,
-      height: 48,
-      child: ElevatedButton.icon(
-        onPressed: _fecharDia,
-        icon: const Icon(Icons.flag_rounded, size: 18),
-        label: const Text('FECHAR DIA',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 1.5)),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _green,
-          foregroundColor: Colors.black,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    final isEditing = _editandoId != null;
+    return Column(
+      children: [
+        if (isEditing) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A2A3A),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _blue.withOpacity(0.3)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.edit_rounded, size: 13, color: _blue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Editando jornada de ${_editandoData.length == 10 ? "${_editandoData.substring(8,10)}/${_editandoData.substring(5,7)}/${_editandoData.substring(0,4)}" : _editandoData}',
+                  style: const TextStyle(fontSize: 11, color: _blue),
+                ),
+              ),
+              GestureDetector(
+                onTap: _cancelarEdicao,
+                child: const Text('Cancelar', style: TextStyle(fontSize: 11, color: _red, fontWeight: FontWeight.w600)),
+              ),
+            ]),
+          ),
+        ],
+        Container(
+          width: double.infinity,
+          height: 48,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: [
+              BoxShadow(
+                color: _green.withOpacity(0.35),
+                blurRadius: 16,
+                spreadRadius: 0,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ElevatedButton.icon(
+            onPressed: _fecharDia,
+            icon: Icon(isEditing ? Icons.check_rounded : Icons.flag_rounded, size: 18),
+            label: Text(
+              isEditing ? 'SALVAR' : 'CONCLUIR DIA',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 1.5),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _green,
+              foregroundColor: Colors.black,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
+
 
   // ── Hero ──────────────────────────────────────────────────────────────────
   Widget _heroTotal() {
@@ -1158,7 +1343,8 @@ class RankingTab extends StatefulWidget {
   final String token;
   final String userName;
   final VoidCallback onLogout;
-  const RankingTab({super.key, required this.token, required this.userName, required this.onLogout});
+  final Function(Map<String, dynamic>) onEditarJornada;
+  const RankingTab({super.key, required this.token, required this.userName, required this.onLogout, required this.onEditarJornada});
   @override
   State<RankingTab> createState() => _RankingTabState();
 }
@@ -1457,72 +1643,87 @@ class _RankingTabState extends State<RankingTab> {
     final km   = (j['km'] as num?)?.toDouble() ?? 0;
     final h    = (j['horas'] as num?)?.toDouble() ?? 0;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-          color: _surface, borderRadius: BorderRadius.circular(10), border: Border.all(color: _border)),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => _editarJornada(j),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(children: [
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_fmtDate(data),
-                  style: const TextStyle(fontSize: 13, color: _txt, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 3),
-              Text(
-                [
-                  if (km > 0) '${km.toStringAsFixed(0)} km',
-                  if (h > 0) '${h.toStringAsFixed(1)}h',
-                ].join('  ·  '),
-                style: const TextStyle(fontSize: 11, color: _muted),
-              ),
-            ])),
-            Text(_fmt(fat),
-                style: const TextStyle(fontSize: 14, color: _green, fontWeight: FontWeight.w600)),
-            const SizedBox(width: 8),
-            const Icon(Icons.edit_outlined, size: 15, color: _muted),
-          ]),
+    return Dismissible(
+      key: ValueKey(id),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (_) => _confirmarDelete(),
+      onDismissed: (_) => _deletarJornada(id),
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+            color: _red.withOpacity(0.85), borderRadius: BorderRadius.circular(10)),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: const Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.delete_outline_rounded, color: Colors.white, size: 22),
+          SizedBox(height: 3),
+          Text('EXCLUIR', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 1)),
+        ]),
+      ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+            color: _surface, borderRadius: BorderRadius.circular(10), border: Border.all(color: _border)),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => _editarJornada(j),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(children: [
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_fmtDate(data),
+                    style: const TextStyle(fontSize: 13, color: _txt, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 3),
+                Text(
+                  [
+                    if (km > 0) '${km.toStringAsFixed(0)} km',
+                    if (h > 0) '${h.toStringAsFixed(1)}h',
+                  ].join('  ·  '),
+                  style: const TextStyle(fontSize: 11, color: _muted),
+                ),
+              ])),
+              Text(_fmt(fat),
+                  style: const TextStyle(fontSize: 14, color: _green, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 8),
+              const Icon(Icons.edit_outlined, size: 15, color: _muted),
+            ]),
+          ),
         ),
       ),
     );
   }
 
   Future<void> _editarJornada(Map<String, dynamic> jornada) async {
-    final updated = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _EditarJornadaSheet(token: widget.token, jornada: jornada, fmtFn: _fmt),
-    );
-    if (updated == true) refresh();
+    widget.onEditarJornada(jornada);
   }
 
+  Future<bool?> _confirmarDelete() => showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: _surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      title: const Text('Excluir jornada?',
+          style: TextStyle(color: _txt, fontWeight: FontWeight.w600, fontSize: 16)),
+      content: const Text('Esta ação não pode ser desfeita.',
+          style: TextStyle(color: _dim, fontSize: 14)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCELAR', style: TextStyle(color: _muted))),
+        TextButton(onPressed: () => Navigator.pop(context, true),
+            child: const Text('EXCLUIR', style: TextStyle(color: _red, fontWeight: FontWeight.w700))),
+      ],
+    ),
+  );
+
   Future<void> _deletarJornada(String id) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Excluir jornada?',
-            style: TextStyle(color: _txt, fontWeight: FontWeight.w600, fontSize: 16)),
-        content: const Text('Esta ação não pode ser desfeita.',
-            style: TextStyle(color: _dim, fontSize: 14)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false),
-              child: const Text('CANCELAR', style: TextStyle(color: _muted))),
-          TextButton(onPressed: () => Navigator.pop(context, true),
-              child: const Text('EXCLUIR', style: TextStyle(color: _red, fontWeight: FontWeight.w700))),
-        ],
-      ),
-    );
-    if (ok != true) return;
     try {
       await _api.deletarJornada(widget.token, id);
-      refresh();
+      if (mounted) setState(() => _jornadas.removeWhere((j) => j['id'] == id));
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.message), backgroundColor: _surface));
+      refresh();
     }
   }
 
