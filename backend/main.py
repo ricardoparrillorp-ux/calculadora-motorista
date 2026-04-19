@@ -1,8 +1,10 @@
 import os
 import uuid
+import time
 import bcrypt
 import jwt
-from datetime import datetime, timedelta, date
+from collections import defaultdict
+from datetime import datetime, timedelta, date, timezone
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,11 +14,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY      = os.getenv('SECRET_KEY', 'dev-secret-troque-em-producao-2024!')
+SECRET_KEY        = os.getenv('SECRET_KEY', 'dev-secret-change-in-production')
 TOKEN_EXPIRE_DAYS = int(os.getenv('TOKEN_EXPIRE_DAYS', '30'))
-DATABASE_URL    = os.getenv('DATABASE_URL', '')
-DB_PATH         = os.getenv('DB_PATH', 'motoristas.db')
-CORS_ORIGINS    = os.getenv('CORS_ORIGINS', '*').split(',')
+DATABASE_URL      = os.getenv('DATABASE_URL', '')
+DB_PATH           = os.getenv('DB_PATH', 'motoristas.db')
+CORS_ORIGINS      = os.getenv('CORS_ORIGINS', 'https://calculadora-motorista.onrender.com').split(',')
 
 # ── Modo banco (SQLite local / PostgreSQL produção) ───────────────────────────
 
@@ -24,12 +26,15 @@ USE_PG = bool(DATABASE_URL)
 
 if USE_PG:
     import psycopg2
+    import psycopg2.errors
     PH = '%s'
     _IntegrityError = psycopg2.IntegrityError
+    _DuplicateColumn = psycopg2.errors.DuplicateColumn
 else:
     import sqlite3
     PH = '?'
     _IntegrityError = sqlite3.IntegrityError
+    _DuplicateColumn = None  # SQLite raises OperationalError with message
 
 def db():
     if USE_PG:
@@ -74,7 +79,6 @@ app.add_middleware(
 )
 
 from fastapi import Request
-import time
 
 @app.middleware('http')
 async def log_requests(request: Request, call_next):
@@ -84,7 +88,40 @@ async def log_requests(request: Request, call_next):
     print(f'[{request.method}] {request.url.path} | status={response.status_code} | {dur}ms', flush=True)
     return response
 
+# ── Rate limiting (in-memory, per nome) ───────────────────────────────────────
+
+_auth_attempts: dict[str, list[float]] = defaultdict(list)
+_WINDOW_SECS = 300   # 5 minutos
+_MAX_ATTEMPTS = 5
+
+def _check_rate_limit(nome: str):
+    now = time.time()
+    attempts = _auth_attempts[nome]
+    # limpar tentativas fora da janela
+    _auth_attempts[nome] = [t for t in attempts if now - t < _WINDOW_SECS]
+    if len(_auth_attempts[nome]) >= _MAX_ATTEMPTS:
+        raise HTTPException(429, 'Muitas tentativas. Tente novamente em 5 minutos.')
+
+def _record_attempt(nome: str):
+    _auth_attempts[nome].append(time.time())
+
+def _clear_attempts(nome: str):
+    _auth_attempts.pop(nome, None)
+
 # ── Banco de dados ─────────────────────────────────────────────────────────────
+
+def _migration_add_column(conn, table: str, col: str, definition: str):
+    try:
+        _exec(conn, f'ALTER TABLE {table} ADD COLUMN {col} {definition}')
+        conn.commit()
+    except Exception as e:
+        if USE_PG:
+            conn.rollback()
+            if not isinstance(e, _DuplicateColumn):
+                raise
+        else:
+            if 'duplicate column' not in str(e).lower():
+                raise
 
 def init_db():
     conn = db()
@@ -115,22 +152,11 @@ def init_db():
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
         )
     """)
-    conn.commit()  # garante que os CREATE TABLE são persistidos
-    # Migração: adicionar colunas novas se ainda não existirem
-    for col, default in [('km_json', "DEFAULT '[]'"), ('horas_json', "DEFAULT '[]'")]:
-        try:
-            _exec(conn, f"ALTER TABLE jornadas ADD COLUMN {col} TEXT {default}")
-            conn.commit()
-        except Exception:
-            if USE_PG:
-                conn.rollback()
-    for col, default in [("security_question", "DEFAULT ''"), ("security_answer_hash", "DEFAULT ''")]:
-        try:
-            _exec(conn, f"ALTER TABLE usuarios ADD COLUMN {col} TEXT {default}")
-            conn.commit()
-        except Exception:
-            if USE_PG:
-                conn.rollback()
+    conn.commit()
+    _migration_add_column(conn, 'jornadas', 'km_json', "TEXT DEFAULT '[]'")
+    _migration_add_column(conn, 'jornadas', 'horas_json', "TEXT DEFAULT '[]'")
+    _migration_add_column(conn, 'usuarios', 'security_question', "TEXT DEFAULT ''")
+    _migration_add_column(conn, 'usuarios', 'security_answer_hash', "TEXT DEFAULT ''")
     conn.close()
 
 init_db()
@@ -143,7 +169,7 @@ def make_token(uid: str, nome: str) -> str:
     payload = {
         'sub': uid,
         'nome': nome,
-        'exp': datetime.utcnow() + timedelta(days=TOKEN_EXPIRE_DAYS)
+        'exp': datetime.now(timezone.utc) + timedelta(days=TOKEN_EXPIRE_DAYS)
     }
     return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
 
@@ -195,7 +221,25 @@ class JornadaUpdate(BaseModel):
     km_json: Optional[str] = None
     horas_json: Optional[str] = None
 
+_JORNADA_ALLOWED_COLS = frozenset({
+    'data', 'km', 'horas', 'faturamento',
+    'ganho_por_km', 'ganho_por_hora',
+    'apps_json', 'km_json', 'horas_json',
+})
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
+
+@app.get('/health')
+def health():
+    conn = db()
+    try:
+        _exec(conn, 'SELECT 1')
+        conn.close()
+        return {'status': 'ok'}
+    except Exception:
+        conn.close()
+        raise HTTPException(503, 'Database unavailable')
+
 
 @app.post('/auth/register')
 def register(req: RegisterReq):
@@ -216,7 +260,7 @@ def register(req: RegisterReq):
     try:
         _exec(conn,
             f'INSERT INTO usuarios (id, nome, pin_hash, security_question, security_answer_hash, criado_em) VALUES ({PH},{PH},{PH},{PH},{PH},{PH})',
-            (uid, nome, pin_hash, req.security_question.strip(), answer_hash, datetime.utcnow().isoformat())
+            (uid, nome, pin_hash, req.security_question.strip(), answer_hash, datetime.now(timezone.utc).isoformat())
         )
         conn.commit()
     except _IntegrityError:
@@ -242,30 +286,38 @@ def get_security_question(nome: str):
 def reset_pin(req: ResetPinReq):
     if len(req.new_pin) != 4 or not req.new_pin.isdigit():
         raise HTTPException(400, 'PIN deve ter exatamente 4 dígitos')
+    nome = req.nome.strip()
+    _check_rate_limit(nome)
     conn = db()
-    cur = _exec(conn, f'SELECT * FROM usuarios WHERE LOWER(nome) = LOWER({PH})', (req.nome.strip(),))
+    cur = _exec(conn, f'SELECT * FROM usuarios WHERE LOWER(nome) = LOWER({PH})', (nome,))
     row = _one(cur)
     answer_hash = row.get('security_answer_hash', '') if row else ''
     if not row or not answer_hash or not bcrypt.checkpw(req.security_answer.strip().lower().encode(), answer_hash.encode()):
         conn.close()
+        _record_attempt(nome)
         raise HTTPException(401, 'Nome ou resposta incorretos')
     new_pin_hash = bcrypt.hashpw(req.new_pin.encode(), bcrypt.gensalt()).decode()
     _exec(conn, f'UPDATE usuarios SET pin_hash = {PH} WHERE id = {PH}', (new_pin_hash, row['id']))
     conn.commit()
     conn.close()
+    _clear_attempts(nome)
     return {'token': make_token(row['id'], row['nome']), 'nome': row['nome'], 'id': row['id']}
 
 @app.post('/auth/login')
 def login(req: AuthReq):
+    nome = req.nome.strip()
+    _check_rate_limit(nome)
     conn = db()
     cur = _exec(conn,
         f'SELECT * FROM usuarios WHERE LOWER(nome) = LOWER({PH})',
-        (req.nome.strip(),)
+        (nome,)
     )
     row = _one(cur)
     conn.close()
     if not row or not bcrypt.checkpw(req.pin.encode(), row['pin_hash'].encode()):
+        _record_attempt(nome)
         raise HTTPException(401, 'Nome ou PIN incorreto')
+    _clear_attempts(nome)
     return {'token': make_token(row['id'], row['nome']), 'nome': row['nome'], 'id': row['id']}
 
 @app.post('/jornadas')
@@ -282,18 +334,20 @@ def criar_jornada(req: JornadaReq, u=Depends(current_user)):
         req.km, req.horas, req.faturamento,
         req.ganho_por_km, req.ganho_por_hora,
         req.apps_json, req.km_json, req.horas_json,
-        datetime.utcnow().isoformat()
+        datetime.now(timezone.utc).isoformat()
     ))
     conn.commit()
     conn.close()
     return {'id': jid, 'message': 'Jornada salva'}
 
 @app.get('/jornadas/minhas')
-def minhas_jornadas(u=Depends(current_user)):
+def minhas_jornadas(offset: int = 0, limit: int = 50, u=Depends(current_user)):
+    if limit > 200:
+        limit = 200
     conn = db()
     cur = _exec(conn,
-        f'SELECT * FROM jornadas WHERE usuario_id = {PH} ORDER BY data DESC',
-        (u['id'],)
+        f'SELECT * FROM jornadas WHERE usuario_id = {PH} ORDER BY data DESC LIMIT {PH} OFFSET {PH}',
+        (u['id'], limit, offset)
     )
     result = _all(cur)
     conn.close()
@@ -310,7 +364,10 @@ def editar_jornada(jid: str, req: JornadaUpdate, u=Depends(current_user)):
     if row['usuario_id'] != u['id']:
         conn.close()
         raise HTTPException(403, 'Sem permissão')
-    ups = {k: v for k, v in req.model_dump().items() if v is not None}
+    ups = {
+        k: v for k, v in req.model_dump().items()
+        if v is not None and k in _JORNADA_ALLOWED_COLS
+    }
     if ups:
         sql = 'UPDATE jornadas SET ' + ', '.join(f'{k}={PH}' for k in ups) + f' WHERE id={PH}'
         _exec(conn, sql, list(ups.values()) + [jid])
@@ -342,6 +399,12 @@ def comparar(
     ate: str,
     u=Depends(current_user)
 ):
+    try:
+        date.fromisoformat(desde)
+        date.fromisoformat(ate)
+    except ValueError:
+        raise HTTPException(400, 'Formato de data inválido. Use YYYY-MM-DD.')
+
     def stats(nome: str, conn):
         cur = _exec(conn, f"""
             SELECT
@@ -393,6 +456,7 @@ def ranking(periodo: str = 'mes', u=Depends(current_user)):
         WHERE data >= {PH}
         GROUP BY usuario_id, usuario_nome
         ORDER BY total_faturamento DESC
+        LIMIT 100
     """, (desde,))
     result = _all(cur)
     conn.close()
