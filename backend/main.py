@@ -367,6 +367,18 @@ def comparar(
         'usuario_b': {'nome': usuario_b, **b},
     }
 
+@app.post('/admin/wipe-users')
+def wipe_users(request: Request):
+    token = request.headers.get('x-admin-token', '')
+    if token != 'calculadora-admin-wipe-d4k9p2m7':
+        raise HTTPException(403, 'Proibido')
+    conn = db()
+    _exec(conn, 'DELETE FROM jornadas')
+    _exec(conn, 'DELETE FROM usuarios')
+    conn.commit()
+    conn.close()
+    return {'message': 'Todos os usuários e jornadas foram apagados'}
+
 @app.get('/ranking')
 def ranking(periodo: str = 'mes', u=Depends(current_user)):
     today = date.today()
