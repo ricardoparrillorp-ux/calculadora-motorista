@@ -256,7 +256,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Text('MOTORISTAS',
                       style: TextStyle(fontSize: 11, letterSpacing: 4, color: _muted, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  const Text('Calculadora',
+                  const Text('Calculadora v3',
                       style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: _txt, letterSpacing: -0.5)),
                   const SizedBox(height: 36),
 
