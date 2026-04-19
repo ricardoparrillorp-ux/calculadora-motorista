@@ -229,8 +229,8 @@ class _LoginScreenState extends State<LoginScreen> {
       widget.onLogin(data['token'] as String, data['nome'] as String);
     } on ApiException catch (e) {
       setState(() { _error = e.message; _pin = ''; _loading = false; });
-    } catch (e) {
-      setState(() { _error = e.toString(); _pin = ''; _loading = false; });
+    } catch (_) {
+      setState(() { _error = 'Sem conexão com o servidor'; _pin = ''; _loading = false; });
     }
   }
 
@@ -256,7 +256,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Text('MOTORISTAS',
                       style: TextStyle(fontSize: 11, letterSpacing: 4, color: _muted, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  const Text('Calculadora v3',
+                  const Text('Calculadora',
                       style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: _txt, letterSpacing: -0.5)),
                   const SizedBox(height: 36),
 

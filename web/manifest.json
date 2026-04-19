@@ -1,6 +1,6 @@
 {
-    "name": "calculadora_motorista",
-    "short_name": "calculadora_motorista",
+    "name": "Calculadora do Motorista",
+    "short_name": "Calc. Motorista",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
